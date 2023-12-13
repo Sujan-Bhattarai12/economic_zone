@@ -1,0 +1,465 @@
+---
+title: 'EDS 223: assignment 4'
+author: "{sujan}"
+date: "2022-11-16"
+output:
+    html_document:
+      print_df: paged
+      toc: yes
+      toc_depth: 4
+      toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+getwd()
+```
+
+## Overview
+Marine aquaculture has the potential to play an important role in the global food supply as a more sustainable protein option than land-based meat production.[^hall] [Gentry et al.](https://www.nature.com/articles/s41559-017-0257-9) mapped the potential for marine aquaculture globally based on multiple constraints, including ship traffic, dissolved oxygen, bottom depth .[^gentry]
+
+For this assignment, you are tasked with determining which Exclusive Economic Zones (EEZ) on the West Coast of the US are best suited to developing marine aquaculture for several species of oysters.\
+
+Based on previous research, we know that oysters needs the following conditions for optimal growth:\
+
+-   sea surface temperature: 11-30&deg;C\
+-   depth: 0-70 meters below sea level
+
+##### Learning objectives:
+-   combining vector/raster data\
+-   resampling raster data\
+-   masking raster data\
+-   map algebra\
+
+### Data
+#### Sea Surface Temperature
+We will use average annual sea surface temperature (SST) from the years 2008 to 2012 to characterize the average sea surface temperature within the region. The data we are working with was originally generated from [NOAA's 5km Daily Global Satellite Sea Surface Temperature Anomaly v3.1](https://coralreefwatch.noaa.gov/product/5km/index_5km_ssta.php).
+
+#### Bathymetry
+To characterize the depth of the ocean we will use the [General Bathymetric Chart of the Oceans (GEBCO)](https://www.gebco.net/data_and_products/gridded_bathymetry_data/#area).[^gebco]
+
+#### Exclusive Economic Zones
+We will be designating maritime boundaries using Exclusive Economic Zones off of the west coast of US from [Marineregions.org](https://www.marineregions.org/eez.php).
+
+## Assignment
+
+Below is an outline of the steps you should consider taking to achieve the assignment tasks. 
+
+#### Prepare data (5 points)
+To start, we need to load all necessary data and make sure it has the coordinate reference system. 
+
+-   load necessary packages and set path\ 
+    -   I recommend using the [`here` package](https://here.r-lib.org/)
+-   read in the shapefile for the West Coast EEZ (`wc_regions_clean.shp`)\
+-   read in SST rasters
+    -   `average_annual_sst_2008.tif`\
+    -   `average_annual_sst_2009.tif`\
+    -   `average_annual_sst_2010.tif`\
+    -   `average_annual_sst_2011.tif`\
+    -   `average_annual_sst_2012.tif`\
+-   combine SST rasters into a raster stack\
+-   read in bathymetry raster (`depth.tif`)\
+-   check that data are in the same coordinate reference system\
+    -   reproject any data not in the same projection\
+
+```{r include=TRUE, warning=FALSE, messages=FALSE}
+#load required packages
+library(stars)
+library(terra)
+library(tidyverse)
+library(tmap)
+library(patchwork)
+library(ggspatial)
+library(raster)
+library(here)
+
+##read the data 
+depth_ocean <- rast(here("data", "data", "depth.tif"))
+summary(depth_ocean)
+
+##stack the multiple temperature rasters into on 
+year_2008 <- rast("data/data/average_annual_sst_2008.tif")
+year_2009 <- rast("data/data/average_annual_sst_2009.tif")
+year_2010 <- rast("data/data/average_annual_sst_2010.tif")
+year_2011 <- rast("data/data/average_annual_sst_2011.tif")
+year_2012 <- rast("data/data/average_annual_sst_2012.tif")
+
+#stack all these SST data
+temperature <- stack(c(year_2008, year_2009, year_2010, year_2011, year_2012))
+
+##economic region data
+west_coast_shape <- st_read("data/data/wc_regions_clean.shp")
+plot(west_coast_shape)
+```
+
+#### Process data (10 points)
+Next, we need process the SST and depth data so that they can be combined. In this case the SST and depth data have slightly different resolutions, extents, and positions. We don't want to change the underlying depth data, so we will need to resample to match the SST data using the nearest neighbor approach. 
+
+-   find the mean SST from 2008-2012\
+-   convert SST data from Kelvin to Celsius\
+    -   hint: subtract by 273.15\
+-   crop depth raster to match the extent of the SST raster\
+-   note: the resolutions of the SST and depth data do not match\
+    -   resample the NPP data to match the resolution of the SST data using the nearest neighbor approach\
+-   check that the depth and SST match in resolution, extent, and coordinate reference system\
+    -   hint: can the rasters be stacked?
+    
+```{r include=TRUE}
+#average SST between 2008 and 2012
+SST_temperature <- mean(year_2008, year_2009, year_2010, year_2011, year_2012)
+
+#convert to Celsius
+SST_temperature <- SST_temperature - 273.15
+
+##match the extent of Depth and SST(change SST to match Depth)
+#1. make the crs same for both of them
+
+SST_temperature <- project(SST_temperature, crs(depth_ocean))
+crs(SST_temperature)==crs(depth_ocean)
+
+#crop the Depth to match SST
+cropped_depth_ocean <- crop(depth_ocean, SST_temperature)
+
+#resample to match the resolution
+cropped_depth_ocean = resample(cropped_depth_ocean, y = SST_temperature, method = "near")  ##Minimum and maximum values are out of range
+
+```
+
+#### Find suitable locations (20)
+In order to find suitable locations for marine aquaculture, we'll need to find locations that are suitable in terms of both SST and depth.
+
+-   reclassify SST and depth data into locations that are suitable for Lump sucker fish\
+    -   hint: set suitable values to `1` and unsuitable values to `NA`\
+-   find locations that satisfy both SST and depth conditions\
+    -   hint: create an overlay using the `lapp()` function multiplying cell values\
+    
+```{r include=TRUE}
+##reclassify SST 
+reclass_matrix_sst <- matrix(c(-50, 10, NA, 11, 30, 1, 31, Inf, NA), ncol = 3, byrow = TRUE)
+sst_classified <- classify(SST_temperature, rcl = reclass_matrix_sst)
+plot(sst_classified)
+
+## reclassify Depth
+cropped_depth_ocean[is.na(cropped_depth_ocean)] <- 0
+reclass_matrix <- matrix(c(-10000, -71, NA, -70, 0, 1, 1, Inf, NA), ncol = 3, byrow = TRUE)
+ocean_classified <- classify(cropped_depth_ocean, rcl = reclass_matrix)
+plot(ocean_classified)
+
+##perform multiplication between two layers using lapp to create suitable areas 
+## stack them to check if they works
+crs(sst_classified)==crs(ocean_classified)
+
+#stack them
+ocean_sst_stacked = stack(x= c(sst_classified, ocean_classified))
+class(rast(ocean_sst_stacked))
+
+##function for stacking
+and_logic <- function(x, y){
+  ifelse(x == 1 & y == 1, 1, NA)
+}
+
+# use local function to operate on each cells
+suitable_for_sucker_fish <- terra::lapp(rast(ocean_sst_stacked), fun = and_logic)
+plot(suitable_for_sucker_fish)
+
+```
+
+#### Determine the most suitable EEZ (20 points)
+We want to determine the total suitable area within each EEZ in order to rank zones by priority. To do so, we need to find the total area of suitable locations within each EEZ.
+
+-   select suitable cells within West Coast EEZs\
+-   find area of grid cells\
+-   find the total suitable area within each EEZ\
+    -   hint: it might be helpful to rasterize the EEZ data\
+-   find the percentage of each zone that is suitable\
+    -   hint it might be helpful to join the suitable area by region onto the EEZ vector data\
+    
+```{r include=TRUE}
+#create dummy variable for operation
+v =  west_coast_shape  #shape file
+r = suitable_for_sucker_fish ## raster data
+
+
+##since lat lon does not measure, projecting it to another for length measurement
+target_crs <- "+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs"
+r_transformed <- project(r, target_crs)
+
+#resolution on both x and y side, as multplication of them gives area
+x = terra:: res(r_transformed)[1]
+y = terra:: res(r_transformed)[2]
+
+## extract all points that fall within in the EEZ shape file, and if raster value layers has NA, drop them
+eez_zone = terra::extract(r, v) %>% 
+           na.omit()
+
+##calcluate area under each group ID and divide it by 10**6 to convert it to Kilimoeter square.
+areas_under_each_zone <- eez_zone %>% 
+                         group_by(ID) %>% 
+                         count() %>% 
+                         mutate(area = (n * x * y)/10^6)
+
+## total suitable areas for zoning across all IDS
+sum(areas_under_each_zone)
+
+##percentage of each zone that is suitable for zoning 
+combined_v_areas_under <- inner_join(v, areas_under_each_zone, by  = c('rgn_id'='ID')) %>% 
+                          group_by('rgn_id') %>% 
+                          mutate(percentage_of_area = area/area_km2 * 100) %>% 
+                          ungroup()
+
+# percentage of area suitable for EEZ
+combined_v_areas_under[c('rgn', 'percentage_of_area')] 
+
+```
+    
+#### Visualize results (5 points)
+Now that we have results, we need to present them!
+
+Create the following maps:
+
+-   total suitable area by region\
+-   percent suitable area by region\
+
+Include:
+
+-   legible legends\
+-   updated color aesthetics\
+-   basemap\
+
+```{r include=TRUE, message=FALSE}
+##Plot suitabale areas by region `comb` and full zone)
+#v_rasterized <- rasterize(combined_v_areas_under, suitable_for_sucker)
+library(ggmap)
+library(basemaps)
+
+cliped_points <- as.polygons(suitable_for_sucker_fish) %>% 
+                     st_as_sf() 
+
+##clip the area nad make it ready for maps
+cliped_points <- st_intersection(cliped_points, combined_v_areas_under)
+cliped_points["Suitable_region"] <- ""
+
+
+## plot the suitable regions within each eez
+economic_zone <- ggplot(combined_v_areas_under)+
+  geom_sf(aes(fill = rgn), alpha = 0.5)+
+  labs(fill = "Economic zone")+
+  annotation_scale()+
+  ggtitle(as.character("Economic region with Suitable areas"))+
+  annotation_north_arrow( location = "tr", 
+                          height = unit(0.7, "cm"),
+                          width  = unit(0.7, "cm"),
+                          style = north_arrow_minimal())
+
+economic_zone +
+  geom_sf(data = cliped_points, aes(color = Suitable_region), shape = 20, alpha = 0.5) +
+  theme_bw()
+
+
+## plot percent suitable area by region by block
+ggplot(combined_v_areas_under)+
+  geom_sf(aes(fill = percentage_of_area))+
+  scale_fill_continuous(low="lightgreen", high = "darkgreen")+
+  ggtitle(as.character("Percentage suitable for Lump Sucker Fish"))+
+  annotation_scale()+
+  annotation_north_arrow( location = "tr", 
+                          height = unit(0.7, "cm"),
+                          width  = unit(0.7, "cm"),
+                          style = north_arrow_minimal())
+
+##wit basemaps
+invisible(suppressMessages({
+  us_geo <- tigris::states(class = "sf")
+}))
+
+
+california <- us_geo %>% filter(NAME == 'California')
+oregon <- us_geo %>% filter(NAME == "Oregon")
+washington <- us_geo %>% filter(NAME == "Washington")
+
+
+tm_shape(combined_v_areas_under)+
+  tm_polygons(fill = 'percentage_of_area')+
+  tm_shape(california)+
+  tm_text("California", size = 0.8, col = "black", bg.col = "white")+
+  tm_borders(col = 'red')+
+  tm_shape(oregon)+
+  tm_text("Oregon", size = 0.8, col = "black", bg.col = "white")+
+  tm_borders()+
+  tm_shape(washington)+
+  tm_text("Washington", size = 0.8, col = "black", bg.col = "white")+
+  tm_borders()+ 
+  tm_layout(title = "Alternative maps including basemaps for the Economic Zone")
+
+```
+
+#### Broaden your workflow! (40 points)
+Now that you've worked through the solution for one group of species, let's update your workflow to work for other species. Please create a function that would allow you to reproduce your results for other species. Your function should be able to do the following:\
+
+-   accept temperature and depth ranges and species name as inputs\
+-   create maps of total suitable area and percent suitable area per EEZ with the species name in the title\
+
+Run your function for a species of your choice! You can find information on species depth and temperature requirements on [SeaLifeBase](https://www.sealifebase.ca/search.php). Remember, we are thinking about the potential for marine aquaculture, so these species should have some reasonable potential for commercial consumption. 
+
+```{r}
+##write whole function out on this 
+economic_zone_finder <- function(min_temp  =  min_temp,
+                                 max_temp  =  max_temp,
+                                 min_depth =  min_depth,
+                                 max_depth =  max_depth,
+                                 fish_species = fish){
+
+depth_ocean <- rast(here("data", "data", "depth.tif"))  #read depth data
+##stack the multiple temperature rasters
+year_1 <- rast("data/data/average_annual_sst_2008.tif")
+year_2 <- rast("data/data/average_annual_sst_2009.tif")
+year_3 <- rast("data/data/average_annual_sst_2010.tif")
+year_4 <- rast("data/data/average_annual_sst_2011.tif")
+year_5 <- rast("data/data/average_annual_sst_2012.tif")
+
+#perform data manipulation
+temperature_stacked  <-   stack(c(year_1, year_2, year_3, year_4, year_5))
+west_coast           <-   st_read("data/data/wc_regions_clean.shp")
+sst_temperature      <-   rast(mean(temperature_stacked) - 273.15)  #(find mean among year and convert to celsius)
+
+##match the extent of Depth and SST(change SST to match Depth)
+#check if the crs is same
+
+sst_temperature <- project(sst_temperature, crs(depth_ocean))
+
+
+##match the extent and origin of surface temperature and ocen depth and resample
+cropped_depth_ocean <- resample(crop(depth_ocean, sst_temperature), 
+                                       y = sst_temperature, method = 'near')
+
+##reclassify surface temperatue 
+reclass_matrix_sst <- matrix(c(-Inf, min_temp, NA, 
+                               min_temp + 1, max_temp, 1,
+                               max_temp + 1, Inf, NA),
+                               ncol = 3, 
+                               byrow = TRUE)
+
+sst_classified <- classify(sst_temperature, rcl = reclass_matrix_sst)
+
+## reclassify Depth
+reclass_matrix <- matrix(c(-Inf, min_depth, NA,
+                           min_depth, max_depth, 1,
+                           max_depth, Inf, NA),
+                           ncol = 3,
+                           byrow = TRUE)
+
+ocean_classified <- classify(cropped_depth_ocean, rcl = reclass_matrix)
+
+#stack surface temperature with ocean depth
+ocean_sst_stacked = stack(x= c(sst_classified, ocean_classified))
+
+##function for applying function across global layers
+logic <- function(x, y){
+  ifelse(x == 1 & y == 1, 1, NA)
+}
+
+# use local function to operate on each cells
+suited_region_for_fish <- terra::lapp(rast(ocean_sst_stacked), fun = and_logic)
+
+#create dummy variable for operation
+v =  west_coast  #shape file
+r = suited_region_for_fish ## raster data
+
+##since lat lon does not measure, projecting it to another for length measurement
+target_crs <- "+proj=utm +zone=33 +datum=WGS84 +units=m +no_defs"
+r_transformed <- project(r, target_crs)
+
+#resolution on both x and y side, as multplication of them gives area
+x = terra:: res(r_transformed)[1]
+y = terra:: res(r_transformed)[2]
+
+## extract all points that fall within in the EEZ shape file, and if raster value layers has NA, drop them
+eez_zone = terra::extract(r, v) %>% 
+           na.omit()
+
+##calcluate area under each group ID and divide it by 10**6 to convert it to Kilimoeter square.
+areas_under_each_zone <- eez_zone %>% 
+                         group_by(ID) %>% 
+                         count() %>% 
+                         mutate(area = (n * x * y)/10^6)
+
+## total suitable areas for zoning across all IDS
+print(sum(areas_under_each_zone))
+
+##percentage of each zone that is suitable for zoning 
+combined_v_areas_under <- inner_join(v, areas_under_each_zone, by  = c('rgn_id'='ID')) %>% 
+                          group_by('rgn_id') %>% 
+                          mutate(percentage_of_area = area/area_km2 * 100) %>% 
+                          ungroup()
+
+# percentage of area suitable for EEZ
+combined_v_areas_under[c('rgn', 'percentage_of_area')] 
+
+
+##polygons
+cliped_points <- as.points(suited_region_for_fish) %>% 
+                     st_as_sf() 
+cliped_points <- st_intersection(cliped_points, combined_v_areas_under)
+cliped_points["Suitable_region"] <- ""
+
+##change rastser to points so that it can be overlaied to another sf object
+#vectorized_suited_regions_for_fish <-  as.points(suited_region_for_fish) %>% 
+                                      # st_as_sf()
+
+# plot the points on vector scaled
+economic_zone <- ggplot(combined_v_areas_under)+
+  geom_sf(aes(fill = rgn))+
+  labs(fill = "Economic zone")+
+  ggtitle(as.character(paste("Suitable region for", fish_species)))+
+  geom_sf(data = cliped_points, size = 0.5)+
+  annotation_scale()+
+  annotation_north_arrow( location = "tr", 
+                          height = unit(0.7, "cm"),
+                          width  = unit(0.7, "cm"),
+                          style = north_arrow_minimal())
+
+suitable_eez <- economic_zone +
+                geom_sf(data = cliped_points, aes(color = Suitable_region), shape = 20, alpha = 0.5) +
+                theme_bw()
+  
+## percent suitable area by region 
+percent_area <- ggplot(combined_v_areas_under)+
+                geom_sf(aes(fill = percentage_of_area))+
+                scale_fill_continuous(low="red", high = "green")+
+                ggtitle(as.character(paste("Suitable Percentage region for", fish_species)))+
+                annotation_scale()+
+                annotation_north_arrow( location = "tr", 
+                                        height = unit(0.7, "cm"),
+                                        width  = unit(0.7, "cm"),
+                                        style = north_arrow_minimal())
+
+with_basemap <- tm_shape(combined_v_areas_under)+
+                tm_polygons(fill = 'percentage_of_area')+
+                tm_shape(california)+
+                tm_text("California", size = 0.8, col = "black", bg.col = "white")+
+                tm_borders()+
+                tm_shape(oregon)+
+                tm_text("Oregon", size = 0.8, col = "black", bg.col = "white")+
+                tm_borders()+
+                tm_shape(washington)+
+                tm_text("Washington", size = 0.8, col = "black", bg.col = "white")+
+                tm_borders()+
+                tm_layout(title = "Percentage area with basemap")
+
+return(list( suitable_eez, percent_area, with_basemap))
+}
+ 
+##  calculate for abra aequalis that survives between 0 to 28 degree depth, and tempetaure up to 73 degrees                               
+economic_zone_finder(min_temp = 0, max_temp = 73, min_depth = 0, max_depth = 28, fish_species = "Abra aequalis")
+
+```
+
+
+[^hall]:Hall, S. J., Delaporte, A., Phillips, M. J., Beveridge, M. & O’Keefe, M. Blue Frontiers: Managing the Environmental Costs of Aquaculture (The WorldFish Center, Penang, Malaysia, 2011). 
+
+[^gentry]:Gentry, R. R., Froehlich, H. E., Grimm, D., Kareiva, P., Parke, M., Rust, M., Gaines, S. D., & Halpern, B. S. Mapping the global potential for marine aquaculture. *Nature Ecology & Evolution*, 1, 1317-1324 (2017).
+
+[^gebco]:GEBCO Compilation Group (2022) GEBCO_2022 Grid (doi:10.5285/e0f0bb80-ab44-2739-e053-6c86abc0289c).
+
+
+
