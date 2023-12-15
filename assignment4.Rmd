@@ -119,9 +119,9 @@ cropped_depth_ocean = resample(cropped_depth_ocean, y = SST_temperature, method 
 In order to find suitable locations for marine aquaculture, find locations that are suitable in terms of both SST and depth.
 
 -   reclassify SST and depth data into locations that are suitable for Lump sucker fish\
-    -   # set suitable values to `1` and unsuitable values to `NA`\
+      # set suitable values to `1` and unsuitable values to `NA`\
 -   find locations that satisfy both SST and depth conditions\
-        # create an overlay using the `lapp()` function multiplying cell values\
+      # create an overlay using the `lapp()` function multiplying cell values\
     
 ```{r include=TRUE}
 ##reclassify SST 
