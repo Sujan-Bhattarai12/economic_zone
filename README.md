@@ -8,6 +8,28 @@ This project aims to identify Exclusive Economic Zones (EEZ) on the West Coast o
 - **Bathymetry:** General Bathymetric Chart of the Oceans (GEBCO) data is used to characterize ocean depth.
 - **Exclusive Economic Zones (EEZ):** Maritime boundaries are designated using EEZ data from Marineregions.org.
 
+##Data Structure
+.
+├── data
+│   ├── data
+│   │   ├── average_annual_sst_2008.tif
+│   │   ├── average_annual_sst_2009.tif
+│   │   ├── average_annual_sst_2010.tif
+│   │   ├── average_annual_sst_2011.tif
+│   │   ├── average_annual_sst_2012.tif
+│   │   ├── depth.tif
+│   │   ├── wc_regions_clean.dbf
+│   │   ├── wc_regions_clean.prj
+│   │   ├── wc_regions_clean.shp
+│   │   └── wc_regions_clean.shx
+│   └── __MACOSX
+│       └── data
+├── economic-zonation.Rproj
+├── economic_zone.html
+├── economic_zone.Rmd
+└── README.md
+
+
 ## Project Outline
 1. **Prepare Data:**
    - Load necessary packages and set the working directory.
