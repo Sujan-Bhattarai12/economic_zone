@@ -83,16 +83,7 @@ plot(west_coast_shape['rgn_id'])
 ```
 
 #### Process data
-Process the SST and depth data so that they can be combined. In this case the SST and depth data have slightly different resolutions, extents, and positions. So, don't change the underlying depth data. Follow the flowchart below:
-
--   find the mean SST from 2008-2012\
--   convert SST data from Kelvin to Celsius\
-    -   hint: subtract by 273.15\
--   crop depth raster to match the extent of the SST raster\
--   note: the resolutions of the SST and depth data do not match\
-    -   resample the NPP data to match the resolution of the SST data using the nearest neighbor approach\
--   check that the depth and SST match in resolution, extent, and coordinate reference system\
-    -   hint: can the rasters be stacked?
+Calculating mean SST (2008-2012), converting to Celsius, cropping depth raster to match SST extent. Resample depth data to SST resolution (nearest neighbor). Check for alignment in resolution, extent, and CRS before potential stacking."
     
 ```{r include=TRUE}
 #average SST between 2008 and 2012
@@ -115,13 +106,7 @@ cropped_depth_ocean = resample(cropped_depth_ocean, y = SST_temperature, method 
 
 ```
 
-#### Find suitable locations
-In order to find suitable locations for marine aquaculture, find locations that are suitable in terms of both SST and depth.
-
--   reclassify SST and depth data into locations that are suitable for Lump sucker fish\
-      # set suitable values to `1` and unsuitable values to `NA`\
--   find locations that satisfy both SST and depth conditions\
-      # create an overlay using the `lapp()` function multiplying cell values\
+Identify optimal locations for marine aquaculture, reclassify SST and depth data for Lump sucker fish suitability. Set suitable values to 1 and unsuitable values to NA. Find locations meeting both SST and depth conditions using the lapp() function, overlaying the data by multiplying cell values
     
 ```{r include=TRUE}
 ##reclassify SST 
@@ -152,15 +137,7 @@ plot(suitable_for_sucker_fish)
 
 ```
 
-#### Determine the most suitable EEZ
-Determine the total suitable area within each EEZ in order to rank zones by priority. To do so,find the total area of suitable locations within each EEZ.
-
--   select suitable cells within West Coast EEZs\
--   find area of grid cells\
--   find the total suitable area within each EEZ\
-    -  helpful to rasterize the EEZ data\
--   find the percentage of each zone that is suitable\
-    -  helpful to join the suitable area by region onto the EEZ vector data\
+Prioritize marine aquaculture zones, determine the total suitable area within each Exclusive Economic Zone (EEZ). Begin by selecting suitable cells within West Coast EEZs, followed by calculating the area of grid cells. Rasterize the EEZ data to facilitate computation. Then, find the total suitable area within each EEZ and calculate the percentage of each zone that is suitable. This process is streamlined by joining the suitable area data by region onto the EEZ vector data.
     
 ```{r include=TRUE}
 #create dummy variable for operation
